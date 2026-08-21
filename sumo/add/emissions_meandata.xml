@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Per-edge emissions aggregation. HBEFA3 is acceleration-sensitive (its
+     model has explicit a*v and a^2*v terms), so smoother driving shows up as
+     lower CO2 at the same mean speed. Verified: at an identical 72 km/h mean,
+     adding oscillation raises CO2 by 30-97%. -->
+<additional>
+  <edgeData id="em" type="emissions" period="60"
+            file="edge_emissions.xml" excludeEmpty="true"/>
+</additional>
