@@ -1,0 +1,16 @@
+<configuration>
+    <input>
+        <net-file value="net/plain.net4.xml"/>
+        <route-files value="routes/route.straight.d3300.xml"/>
+    </input>
+
+    <time>
+        <begin value="0"/>
+        <end value="2400"/>
+    </time>
+
+    <report>
+        <verbose value="true"/>
+        <no-step-log value="true"/>
+    </report>
+</configuration>

@@ -1,71 +1,141 @@
 # ---------------------------------------------------------------------------
 # What is shared, and why
 # ---------------------------------------------------------------------------
-# The repository is deliberately small (~2 MB against ~270 MB on disk). It
-# carries the scenario definition, the code, and the result tables needed to
-# reproduce every number in FINDINGS.md — and nothing else. Anything a script
-# regenerates is excluded.
+# This file is an ALLOWLIST: everything is ignored unless it is named below.
+# The repository carries the final report, the scenario, the code that
+# produced the report's results, the raw result rows behind every table and
+# figure, and the experiment log -- nothing else. Working notes (docs/),
+# exploratory and superseded scripts, the model bake-off (experiments/),
+# SUMO output and caches stay on the author's disk and are never committed.
 #
-# Deliberately kept:
-#   sumo/net, sumo/routes, sumo/add, sumo/simulation2.sumocfg  the scenario
-#   model/ control/ validation/ calibration/                   the code
-#   data/*.json, data/sumo_baseline.npz                        results + fixed baseline
-#   experiments/exp{A,B}*/{core,bmetanet}.py + params          parity-test references
-#   FINDINGS.md, README.md                                     what was found, how to run it
+# To share a new file, add a `!` line for it here; `git add .` will not pick
+# it up otherwise.
 # ---------------------------------------------------------------------------
 
-# Python
+/*
+
+# --- top level -------------------------------------------------------------
+!/.gitignore
+!/README.md
+!/EXPERIMENTS.md
+!/Final_Report.pdf
+!/requirements.txt
+
+# --- the prediction model --------------------------------------------------
+!/model/
+/model/*
+!/model/__init__.py
+!/model/README.md
+!/model/metanet_model.py
+!/model/ExtraData.py
+
+# --- the controller, experiment runner, analysis and report figures --------
+!/control/
+/control/*
+!/control/__init__.py
+!/control/README.md
+!/control/nmpc_metanet.py
+!/control/cost_functions.py
+!/control/phase_d.py
+!/control/sweep.py
+!/control/launch_sweep.ps1
+!/control/run_prediction_study.ps1
+!/control/run_sign_check.ps1
+!/control/analyse_deploy.py
+!/control/analyse_overnight.py
+!/control/analyse_final.py
+!/control/analyse_final_ssm.py
+!/control/analyse_robustness.py
+!/control/make_appendix_tables.py
+!/control/plot_report_part1.py
+!/control/plot_report_model.py
+!/control/plot_report_results.py
+!/control/plot_sign_response.py
+
+# --- metrics, model validation and tests -----------------------------------
+!/validation/
+/validation/*
+!/validation/__init__.py
+!/validation/README.md
+!/validation/sumo_metrics.py
+!/validation/wave_metrics.py
+!/validation/validate_wave_trajectories.py
+!/validation/control_authority.py
+!/validation/metanet_vs_sumo.py
+!/validation/prediction_study.py
+!/validation/analyse_prediction_study.py
+!/validation/term_scale.py
+!/validation/flat_objective_check.py
+!/validation/sign_check.py
+!/validation/test_bounded_parity.py
+!/validation/test_bounded_parity_straight.py
+!/validation/test_antic_parity.py
+!/validation/test_driver_aware.py
+
+# --- model calibration -----------------------------------------------------
+!/calibration/
+/calibration/*
+!/calibration/__init__.py
+!/calibration/README.md
+!/calibration/make_straight_baseline.py
+!/calibration/calibrate_straight.py
+!/calibration/calibrate_jam.py
+
+# --- the two reference implementations the calibration and parity tests ----
+# import (numpy Bounded-METANET + its merge calibration, and the expA model).
+# The rest of the bake-off (~470 files) is not shared.
+!/experiments/
+/experiments/*
+!/experiments/expB_bounded/
+/experiments/expB_bounded/*
+!/experiments/expB_bounded/bmetanet.py
+!/experiments/expB_bounded/calibrate_bm.py
+!/experiments/expB_bounded/params_pub_pred.json
+!/experiments/expA_asym_antic/
+/experiments/expA_asym_antic/*
+!/experiments/expA_asym_antic/core.py
+!/experiments/expA_asym_antic/params_s14_smooth_tau18.json
+
+# --- the SUMO scenarios (SUMO output in sumo/out/ is not shared) ------------
+!/sumo/
+/sumo/*
+!/sumo/*.sumocfg
+!/sumo/build_long_net.py
+!/sumo/build_straight_net.py
+!/sumo/build_demand_variants.py
+!/sumo/net/
+!/sumo/routes/
+!/sumo/add/
+/sumo/add/*
+!/sumo/add/emissions_meandata.xml
+
+# --- data: fixed baselines, calibrated parameters, and the raw result rows --
+# behind the report (worker .log/.err files are not shared).
+!/data/
+/data/*
+!/data/sumo_baseline.npz
+!/data/straight_baseline.npz
+!/data/params_straight.json
+!/data/params_jam_s0.json
+!/data/params_jam_dis_s0.json
+!/data/wave_validation.json
+!/data/sign_check.jsonl
+!/data/sweep_final/
+/data/sweep_final/*
+!/data/sweep_final/*.json
+!/data/sweep_final_ssm/
+/data/sweep_final_ssm/*
+!/data/sweep_final_ssm/*.json
+!/data/sweep_bmjam/
+/data/sweep_bmjam/*
+!/data/sweep_bmjam/*.json
+!/data/sweep_straight/
+/data/sweep_straight/*
+!/data/sweep_straight/*.json
+!/data/prediction_study/
+/data/prediction_study/*
+!/data/prediction_study/*.json
+
+# --- never, anywhere -------------------------------------------------------
 __pycache__/
 *.pyc
-
-# --- SUMO run output: hundreds of MB, regenerated by every run --------------
-# sumo/out/ holds per-run emissions and SSM (safety) files, one pair per run.
-sumo/out/
-sumo/output/
-sumo/*.xml
-!sumo/net/*.xml
-!sumo/routes/*.xml
-# sumo/add/ mixes a small config file with the emissions output it produces
-sumo/add/edge_emissions.xml
-!sumo/add/emissions_meandata.xml
-
-# Floating-car-data dumps: ~50 MB each, written by the validation scripts
-*fcd*.xml
-data/*.xml
-
-# --- data/: keep the small result tables, drop the big regenerable arrays ---
-# The .json result tables and sumo_baseline.npz (the FIXED ground-truth
-# baseline, never to be regenerated) are tracked. Everything else here is a
-# cache written by a script and is excluded by size.
-data/*.npz
-!data/sumo_baseline.npz
-data/*.npy
-
-# --- working notes, not part of the shared record --------------------------
-# docs/ is the day-to-day research log, decision history and figure output.
-# FINDINGS.md at the repo root is the shared summary that replaces it.
-docs/
-
-# --- the model bake-off ----------------------------------------------------
-# ~470 files of calibration runs. Only the two reference implementations the
-# parity tests import are kept, so validation/test_*_parity.py still runs.
-experiments/
-# fixed_vsl.py is NOT bake-off code: it produces the constant-sign reference
-# that every result is reported against (FINDINGS.md section 2). It lives here
-# for historical reasons only.
-!experiments/fixed_vsl.py
-!experiments/expA_asym_antic/
-experiments/expA_asym_antic/*
-!experiments/expA_asym_antic/core.py
-!experiments/expA_asym_antic/params_s14_smooth_tau18.json
-!experiments/expB_bounded/
-experiments/expB_bounded/*
-!experiments/expB_bounded/bmetanet.py
-!experiments/expB_bounded/params_pub_pred.json
-
-# superseded code kept locally for reference only
-old/
-
-# Claude Code's operating manual: personal AI tooling, and it points at docs/,
-# which is not shared. Kept locally, not part of the shared record.
-CLAUDE.md

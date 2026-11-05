@@ -1,0 +1,30 @@
+<edges>
+    <edge id="u0u1" from="u0" to="u1" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u1u2" from="u1" to="u2" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u2u3" from="u2" to="u3" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u3u4" from="u3" to="u4" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u4u5" from="u4" to="u5" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u5u6" from="u5" to="u6" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u6u7" from="u6" to="u7" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u7u8" from="u7" to="u8" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u8u9" from="u8" to="u9" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u9u10" from="u9" to="u10" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u10u11" from="u10" to="u11" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u11u12" from="u11" to="u12" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u12u13" from="u12" to="u13" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u13u14" from="u13" to="u14" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u14u15" from="u14" to="u15" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u15u16" from="u15" to="u16" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u16u17" from="u16" to="u17" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="u17start" from="u17" to="start" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="start1" from="start" to="n1" priority="1" numLanes="2" speed="23.5"/>
+    <edge id="n1n2" from="n1" to="n2" priority="1" numLanes="2" speed="24.0"/>
+    <edge id="n2n3" from="n2" to="n3" priority="1" numLanes="2" speed="24.5"/>
+    <edge id="n3n4" from="n3" to="n4" priority="1" numLanes="2" speed="25.0"/>
+    <edge id="n4n5" from="n4" to="n5" priority="1" numLanes="2" speed="25.5"/>
+    <edge id="n5n6" from="n5" to="n6" priority="1" numLanes="2" speed="26.0"/>
+    <edge id="n6n7" from="n6" to="n7" priority="1" numLanes="2" speed="26.5"/>
+    <edge id="n7n8" from="n7" to="n8" priority="1" numLanes="2" speed="27.0"/>
+    <edge id="n8n9" from="n8" to="n9" priority="1" numLanes="2" speed="27.5"/>
+    <edge id="n9end" from="n9" to="end" priority="1" numLanes="1" speed="28.0"/>
+</edges>

@@ -1,0 +1,16 @@
+<configuration>
+    <input>
+        <net-file value="net/plain.net3.xml"/>
+        <route-files value="routes/route.long.d2920.xml"/>
+    </input>
+
+    <time>
+        <begin value="0"/>
+        <end value="1000"/>
+    </time>
+
+    <report>
+        <verbose value="true"/>
+        <no-step-log value="true"/>
+    </report>
+</configuration>

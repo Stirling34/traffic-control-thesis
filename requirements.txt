@@ -1,0 +1,10 @@
+# Versions every result in the report was produced with (Python 3.11.1).
+# SUMO itself is a separate install: Eclipse SUMO 1.24.0, with `sumo` on PATH.
+numpy==1.26.4
+scipy==1.15.3
+matplotlib==3.6.2
+casadi==3.7.2
+sym-metanet==1.1.2
+csnlp==1.6.8
+traci==1.24.0
+sumolib==1.24.0

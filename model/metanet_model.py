@@ -431,13 +431,23 @@ class BoundedMetanetLink(LinkWithVsl[cs.SX]):
     """
 
     __slots__ = ("eta_t", "kap_t", "down_bc", "vsl_scaled", "vsl_legal_kmh",
-                 "is_last_link", "vsl_clamp_eps")
+                 "is_last_link", "vsl_clamp_eps",
+                 "cd_alpha", "cd_rho_ref", "cd_eps", "cd_upstream")
 
     def __init__(self, *args, eta_t=0.7, kap_t=1733.0, down_bc="zero",
                  vsl_scaled=False, vsl_legal_kmh=None, is_last_link=False,
-                 vsl_clamp_eps=0.25, **kwargs):
+                 vsl_clamp_eps=0.25, cd_alpha=0.0, cd_rho_ref=None,
+                 cd_eps=0.02, cd_upstream=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.is_last_link = bool(is_last_link)
+        # capacity drop; alpha 0 makes `_capacity_drop_scale` exactly 1.0 and
+        # the term is skipped entirely in `_bounded_step`, so the default
+        # reproduces the pre-2026-09-01 model bit-identically.
+        self.cd_alpha = float(cd_alpha)
+        self.cd_rho_ref = (float(cd_rho_ref) if cd_rho_ref is not None
+                           else 2.0 * float(self.rho_crit))
+        self.cd_eps = float(cd_eps)
+        self.cd_upstream = cd_upstream
         self.vsl_clamp_eps = float(vsl_clamp_eps)
         self.eta_t = float(eta_t)
         self.kap_t = float(kap_t)
@@ -503,6 +513,31 @@ def _bounded_step(self, net, tau, eta, kappa, T, delta=None, phi=None,
         # No convection, no anticipation, no lane-drop speed penalty.
         Veq = engine.links.Veq(cs.fmax(rho_hat, 0.0), self.v_free,
                                self.rho_crit, self.a)
+        # CAPACITY DROP. Added 2026-09-01. Before this, `_capacity_drop_scale`
+        # was called only from CapacityDropLink / CapacityDropLinkWithVsl /
+        # VslRateLink -- i.e. the shipped and expA model families -- and NEVER
+        # from here, so on Bounded-METANET the `alpha_cd` parameter was a silent
+        # no-op: rollouts at alpha_cd = 0 / 0.118 / 0.25 were bit-identical.
+        # Every Bounded-METANET result in the project was therefore produced
+        # through a model with no capacity-drop mechanism at all, which matters
+        # because METANET's own drop is EMERGENT FROM THE ANTICIPATION TERM
+        # (Hegyi 2004 sec. 3.3; Zhao, Roncoli & Yildirimoglu 2025 sec. 2.2:
+        # "the anticipation term is a primary contributor to the capacity drop
+        # phenomenon within the METANET model") and Bounded-METANET deletes
+        # anticipation. Its authors concede it "underestimates the severity of
+        # the initial flow drop".
+        #
+        # Hegyi (2004) sec. 5.1.1 makes this a necessary condition for the
+        # controller to work at all: "the controller model should be able to
+        # reproduce the capacity drop... Otherwise, the controller will not find
+        # the control signals that can eliminate the capacity drop."
+        #
+        # `alpha_cd` defaults to 0.0 and `_capacity_drop_scale` returns exactly
+        # 1.0 there, so this line is a no-op unless deliberately enabled --
+        # verified by validation/test_bounded_parity.py, which must stay at
+        # ~1e-13 against the numpy original.
+        if getattr(self, "cd_alpha", 0.0):
+            Veq = Veq * _capacity_drop_scale(self, rho)
         if getattr(self, "vsl", None):
             Veq[self.vsl] = smooth_min(Veq[self.vsl], self._vsl_cap(),
                                        self.vsl_clamp_eps
@@ -522,15 +557,26 @@ BoundedMetanetLink.step_dynamics = _bounded_step
 class BoundedMetanetPlainLink(Link[cs.SX]):
     """Bounded-METANET link with no VSL signs. Used for the bottleneck link."""
 
-    __slots__ = ("eta_t", "kap_t", "down_bc", "is_last_link")
+    __slots__ = ("eta_t", "kap_t", "down_bc", "is_last_link",
+                 "cd_alpha", "cd_rho_ref", "cd_eps", "cd_upstream")
 
     def __init__(self, *args, eta_t=0.7, kap_t=1733.0, down_bc="zero",
-                 is_last_link=True, **kwargs):
+                 is_last_link=True, cd_alpha=0.0, cd_rho_ref=None,
+                 cd_eps=0.02, cd_upstream=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.is_last_link = bool(is_last_link)
         self.eta_t = float(eta_t)
         self.kap_t = float(kap_t)
         self.down_bc = str(down_bc)
+        # This is the BOTTLENECK link, so this is where the merge capacity drop
+        # lives: `cd_upstream` is L1, whose last segment supplies the upstream
+        # density that triggers the drop. alpha 0 = disabled = bit-identical to
+        # the pre-2026-09-01 model.
+        self.cd_alpha = float(cd_alpha)
+        self.cd_rho_ref = (float(cd_rho_ref) if cd_rho_ref is not None
+                           else 2.0 * float(self.rho_crit))
+        self.cd_eps = float(cd_eps)
+        self.cd_upstream = cd_upstream
 
     step_dynamics = _bounded_step
 
@@ -657,7 +703,11 @@ class Geometry:
         return [v * MS_TO_KMH for v, l in zip(self.limits_ms, self.lanes) if l == 2]
 
 
-def load_geometry(net_file=None):
+def load_geometry(net_file=None, allow_straight=False):
+    """`allow_straight=True` also accepts a road with the same lane count end to
+    end and no bottleneck (sumo/build_straight_net.py). Such a geometry must be
+    modelled with `MetanetModel(..., n_ctrl=...)`, never the default merge
+    layout, which would silently treat its last edge as a lane drop."""
     if net_file is None:
         net_file = _r("sumo", "net", "plain.net2.xml")
     edges = ExtractData().parse_net_file(net_file)
@@ -668,12 +718,75 @@ def load_geometry(net_file=None):
         limits_ms=[e["avg_speed"] for e in edges],
         edges_raw=edges,
     )
+    straight = allow_straight and all(l == geom.lanes[0] for l in geom.lanes)
     # Sanity: this model hard-assumes "N two-lane edges then one single-lane edge"
-    assert geom.lanes[-1] == 1 and all(l == 2 for l in geom.lanes[:-1]), (
+    assert straight or (geom.lanes[-1] == 1 and all(l == 2 for l in geom.lanes[:-1])), (
         "Network layout changed — METANET model assumes 2-lane edges followed by "
         f"a single 1-lane bottleneck edge, got lanes={geom.lanes}"
     )
     return geom
+
+
+def model_geometry(geom, n_ctrl=9):
+    """The sub-stretch the prediction model spans: the LAST `n_ctrl` two-lane
+    edges plus the one-lane bottleneck.
+
+    On the extended-approach network (sumo/build_long_net.py) the measured road
+    is 5.4 km but the controller's authority is still the nine segments in front
+    of the bottleneck. Slicing the geometry here — rather than widening the
+    model — is what keeps the two scenarios comparable: the NLP has the same
+    11 segments and ~900 variables it always had, so the calibration, the parity
+    tests and the validated 210 s prediction skill all carry over untouched, and
+    the ONLY difference between the short and long runs is how much road is
+    scored.
+
+    Returns `(sub_geometry, offset)`, where `offset` is the index of the first
+    modelled edge in the FULL edge list. On the original network offset is 0 and
+    the returned geometry is the input unchanged, so nothing about the existing
+    results moves.
+    """
+    n_main = geom.n_main
+    if n_ctrl > n_main:
+        raise ValueError("asked for %d controlled edges, geometry has %d"
+                         % (n_ctrl, n_main))
+    offset = n_main - n_ctrl
+    if offset == 0:
+        return geom, 0
+    keep = slice(offset, len(geom.edge_ids))
+    sub = Geometry(
+        edge_ids=geom.edge_ids[keep],
+        lengths_m=geom.lengths_m[keep],
+        lanes=geom.lanes[keep],
+        limits_ms=geom.limits_ms[keep],
+        edges_raw=geom.edges_raw[keep] if geom.edges_raw else None,
+    )
+    return sub, offset
+
+
+def straight_model_geometry(geom, n_up, n_seg=None):
+    """The modelled stretch of the STRAIGHT jam-wave road: `n_seg` edges from
+    edge `n_up` (default: everything to the end), i.e. the controlled segments
+    plus the downstream segments where the disturbance happens. The first `n_up`
+    edges are the measured but unmodelled approach.
+
+    `n_seg` exists for the long-downstream variant (sumo/build_straight_net.py,
+    N_DOWN_LONG), which adds road for a TRAVELLING disturbance to run into. That
+    extra road is scored but deliberately NOT modelled, so the NLP, the
+    calibration and the controller problem stay identical to every earlier
+    straight-road round and the results remain comparable.
+
+    Returns `(sub_geometry, offset)` like `model_geometry`; build the model with
+    `MetanetModel(sub, params, n_ctrl=...)`."""
+    end = len(geom.edge_ids) if n_seg is None else int(n_up) + int(n_seg)
+    keep = slice(int(n_up), min(end, len(geom.edge_ids)))
+    sub = Geometry(
+        edge_ids=geom.edge_ids[keep],
+        lengths_m=geom.lengths_m[keep],
+        lanes=geom.lanes[keep],
+        limits_ms=geom.limits_ms[keep],
+        edges_raw=geom.edges_raw[keep] if geom.edges_raw else None,
+    )
+    return sub, int(n_up)
 
 
 # ---------------------------------------------------------------------------
@@ -697,6 +810,75 @@ PARAMS_BM = dict(
     eta_t=0.7006427004748599, kap_t=1733.3224564846118,
     rho_max=98.29531195944853, down_bc="zero",
     C_o=4074.7466695823164,
+)
+
+# Bounded-METANET refitted to the STRAIGHT jam-wave road
+# (calibration/calibrate_straight.py, 2026-09-15; data/params_straight.json).
+# PARAMS_BM was fitted on the merge, where the mainline never passed ~1750
+# veh/h/lane and discharge is set by the 1-lane bottleneck; this road carries
+# ~2350 veh/h/lane. Fitted on two runs (4000, 4600 veh/h), held out on two
+# (4600 seed 2, 4800): held-out objective 1.92 -> 1.46, 210 s prediction RRMSE
+# 0.25-0.32 -> 0.18-0.24, 2-lane capacity 3714 -> 5900 veh/h.
+#
+# TWO HONEST CAVEATS.
+# 1. The fit is NOT identifiable in (rho_crit, a): three fits with rho_crit 70,
+#    91 and 120 and a 1.42, 1.10 and 0.94 score 1.4647, 1.4636 and 1.4673 on
+#    held-out data. This set is the one whose capacity sits inside the plant's
+#    measured band, which is why it was chosen -- not because it fits best.
+# 2. IT DOES NOT FIX JAM DISCHARGE, which is what motivated the recalibration.
+#    810 -> 1092 veh/h against SUMO's ~4700, and the model still peaks at ~47
+#    veh/km/lane where SUMO's jam reaches ~180. That gap is structural for this
+#    model family (ledger 2026-08-11: the ~2x queue-density gap is irreducible),
+#    so a controller on this road still believes jams drain ~4x too slowly.
+PARAMS_BM_STRAIGHT = dict(
+    family="bounded",
+    v_free_main=80.0, v_free_bneck=80.0,
+    rho_crit=91.2643, a=1.1043,
+    tau_sec=46.5904,
+    eta_t=0.3437, kap_t=1995.16,
+    rho_max=229.532, down_bc="zero",
+    C_o=4866.05,
+)
+
+# Bounded-METANET calibrated on JAM CLEARANCE (calibration/calibrate_jam.py,
+# 2026-10-05, seed 0; data/params_jam_s0.json). Objective = calibrate_straight's
+# (RRMSE + 210 s prediction + penalties) PLUS clearance of SUMO-seeded jams
+# released at 840/900/960 s. Fit cases clear like SUMO (305 vs 282 s from
+# 840 s on d4600_s1); held-out jam cell-seconds within 7-40 % but clearance
+# still slower than SUMO (> 600 vs 468-554 s). General prediction is unchanged
+# from PARAMS_BM_STRAIGHT (held-out 1.466 both).
+# CAVEAT: it gets there with tau 78 s (bound 80) and capacity on its 4700 floor,
+# i.e. a jam that drains slowly because capacity barely exceeds inflow; its
+# jam discharge (3586 veh/h peak at the jam boundary) is still below SUMO's
+# ~4700. Variant B (`_dis`) adds a discharge term to remove that compensation.
+PARAMS_BM_JAM = dict(
+    family="bounded",
+    v_free_main=70.93440200848505, v_free_bneck=70.93440200848505,
+    rho_crit=53.9535662978059, a=2.050126441663475,
+    tau_sec=78.01997072924554,
+    eta_t=0.7027773188323065, kap_t=1036.4586259396597,
+    rho_max=169.14232342811985, down_bc="zero",
+    C_o=6427.215768450603,
+)
+
+# Variant B of the jam-clearance fit (calibrate_jam.py with JAM_W_DIS=1, seed 0;
+# data/params_jam_dis_s0.json): the same objective PLUS |log(peak jam discharge
+# / 4700)|, so clearance cannot be bought with slow drivers and a capacity that
+# barely exceeds inflow (fit A's compensation). Result is physically coherent:
+# tau 24 s, discharge 4687 veh/h peak at the jam boundary (SUMO ~4700); held-out
+# clearance error 0.336 (fit A 0.537, PARAMS_BM 1.09, PARAMS_BM_STRAIGHT 4.95)
+# -- d4600_s2 clears in 400/375/340 s vs SUMO 468/408/348; 210 s prediction
+# RRMSE 0.21-0.22 held out (fit A 0.24-0.25); whole-episode held-out objective
+# 1.548 vs 1.466. Capacity 4631 veh/h sits just under the 4700 band (penalty
+# 0.03), i.e. barely above the 4600 arriving -- note it with any result.
+PARAMS_BM_JAM_DIS = dict(
+    family="bounded",
+    v_free_main=71.3415489963018, v_free_bneck=71.3415489963018,
+    rho_crit=47.30898441981669, a=2.6541893027350927,
+    tau_sec=24.117104352224107,
+    eta_t=0.9601576990778027, kap_t=296.1253618590499,
+    rho_max=118.7126809697613, down_bc="zero",
+    C_o=4554.431780459563,
 )
 
 PARAMS_S14 = dict(
@@ -878,26 +1060,59 @@ class MetanetModel:
       q = [link flows (n_seg); origin flow] (veh/h)
     """
 
-    def __init__(self, geom: Geometry, params: MetanetParams = None):
+    def __init__(self, geom: Geometry, params: MetanetParams = None,
+                 n_ctrl: int = None):
+        """`n_ctrl=None` builds the merge: every 2-lane edge carries a sign and
+        the 1-lane last edge is split into `n_bneck_segs` bottleneck segments.
+
+        `n_ctrl=int` builds a STRAIGHT road (sumo/build_straight_net.py): the
+        first `n_ctrl` edges carry signs and the rest form an unsigned
+        downstream link with the SAME lane count, free-flow speed and critical
+        density, one segment per edge. It is the same road, so
+        `v_free_bneck`/`rho_crit_bneck` are ignored there rather than letting
+        merge-calibrated bottleneck values leak onto plain road."""
         self.geom = geom
         self.p = params if params is not None else MetanetParams()
         p = self.p
+        self.straight = n_ctrl is not None
 
-        n_main = geom.n_main                         # 9 controlled segments
-        # Uniform segment length for L1 = mean of the 2-lane edge lengths (196-200 m)
-        L_main = float(np.mean(geom.lengths_m[:n_main])) / 1000.0
-        n_bneck = max(1, int(p.n_bneck_segs))
-        L_bneck = geom.lengths_m[-1] / 1000.0 / n_bneck
+        if self.straight:
+            n_main = int(n_ctrl)
+            n_bneck = len(geom.edge_ids) - n_main
+            if n_bneck < 1 or any(l != geom.lanes[0] for l in geom.lanes):
+                raise ValueError("straight model needs >=1 downstream edge and "
+                                 "one lane count; got n_ctrl=%d, lanes=%s"
+                                 % (n_main, geom.lanes))
+            if p.phi is not None:
+                raise ValueError("phi is a lane-drop term; a straight road has none")
+            L_main = float(np.mean(geom.lengths_m[:n_main])) / 1000.0
+            L_bneck = float(np.mean(geom.lengths_m[n_main:])) / 1000.0
+            lanes_main = lanes_down = int(geom.lanes[0])
+            legal_kmh = np.array(geom.limits_ms[:n_main]) * MS_TO_KMH
+        else:
+            n_main = geom.n_main                     # 9 controlled segments
+            # Uniform segment length for L1 = mean of the 2-lane edge lengths (196-200 m)
+            L_main = float(np.mean(geom.lengths_m[:n_main])) / 1000.0
+            n_bneck = max(1, int(p.n_bneck_segs))
+            L_bneck = geom.lengths_m[-1] / 1000.0 / n_bneck
+            lanes_main, lanes_down = 2, 1
+            legal_kmh = np.array(geom.main_limits_kmh)
 
         if p.v_free_main is None:
             # scalar per link (library expects scalars — vectors break the origin
             # flow equations; see docs/decisionmaking.md): mean of the edge limits
-            p.v_free_main = float(np.mean(geom.main_limits_kmh))
-        if p.v_free_bneck is None:
-            p.v_free_bneck = geom.limits_ms[-1] * MS_TO_KMH
+            p.v_free_main = float(np.mean(legal_kmh))
+        if self.straight:
+            v_free_down, rho_crit_down = p.v_free_main, p.rho_crit
+        else:
+            if p.v_free_bneck is None:
+                p.v_free_bneck = geom.limits_ms[-1] * MS_TO_KMH
+            v_free_down = p.v_free_bneck
+            rho_crit_down = (p.rho_crit if p.rho_crit_bneck is None
+                             else p.rho_crit_bneck)
 
         # CFL-style stability check for the density update
-        assert p.T * max(p.v_free_main, p.v_free_bneck) < min(L_main, L_bneck), (
+        assert p.T * max(p.v_free_main, v_free_down) < min(L_main, L_bneck), (
             f"Model step T={p.T_sec}s too large for segment length "
             f"{min(L_main, L_bneck)*1000:.0f} m"
         )
@@ -926,7 +1141,14 @@ class MetanetModel:
         if p.family == "bounded":
             vsl_cls = BoundedMetanetLink
             vsl_kw = dict(eta_t=p.eta_t, kap_t=p.kap_t, down_bc=p.down_bc,
-                          is_last_link=False)   # L2 lies downstream of L1
+                          is_last_link=False,   # L2 lies downstream of L1
+                          # capacity drop, added 2026-09-01. L1 is fed by the
+                          # mainstream origin, which carries no density, so its
+                          # first segment falls back to its own (documented in
+                          # `_shifted_upstream_density`). alpha_cd defaults to 0,
+                          # so this changes nothing unless enabled.
+                          cd_alpha=p.alpha_cd, cd_rho_ref=p.rho_cd_ref,
+                          cd_eps=p.cd_eps, cd_upstream=None)
         else:
             vsl_cls = VslRateLink if p.vsl_mode == "rate" else CapacityDropLinkWithVsl
             vsl_kw = (dict(vsl_A=p.vsl_A, vsl_E=p.vsl_E,
@@ -935,7 +1157,7 @@ class MetanetModel:
                       if p.vsl_mode == "rate" else {})
         vsl_kw.update(vsl_scaled=p.vsl_scaled,
                       vsl_clamp_eps=p.vsl_clamp_eps,
-                      vsl_legal_kmh=np.array(geom.main_limits_kmh))
+                      vsl_legal_kmh=legal_kmh)
         if p.family != "bounded":
             # capacity-drop and FD-family kwargs exist only on the METANET links
             vsl_kw.update(
@@ -946,23 +1168,31 @@ class MetanetModel:
                             / p.v_free_main)),
                 **cd)
         L1 = vsl_cls(
-            n_main, 2, L_main, p.rho_max, p.rho_crit, p.v_free_main, p.a,
+            n_main, lanes_main, L_main, p.rho_max, p.rho_crit, p.v_free_main, p.a,
             segments_with_vsl=set(range(n_main)), alpha=p.vsl_alpha, name="L1",
             **vsl_kw,
         )
         bneck_cls = (BoundedMetanetPlainLink if p.family == "bounded"
                      else CapacityDropLink)
-        bneck_kw = (dict(eta_t=p.eta_t, kap_t=p.kap_t, down_bc=p.down_bc)
+        bneck_kw = (dict(eta_t=p.eta_t, kap_t=p.kap_t, down_bc=p.down_bc,
+                         # THE MERGE CAPACITY DROP. `cd_upstream=L1` means the
+                         # drop at the bottleneck is triggered by the density of
+                         # L1's last segment, i.e. by the queue backing up into
+                         # the merge -- which is the mechanism a VSL is supposed
+                         # to prevent. This is the channel that was missing.
+                         cd_alpha=p.alpha_cd, cd_rho_ref=p.rho_cd_ref,
+                         cd_eps=p.cd_eps, cd_upstream=L1)
                     if p.family == "bounded" else dict(
                         cd_upstream=L1, fd_beta=(
                             p.fd_beta if p.fd_beta is not None
-                            else p.capacity_per_lane(p.v_free_bneck)
-                            / (rho_jam - p.capacity_per_lane(p.v_free_bneck)
-                               / p.v_free_bneck)), **cd))
+                            else p.capacity_per_lane(v_free_down)
+                            / (rho_jam - p.capacity_per_lane(v_free_down)
+                               / v_free_down)), **cd))
+        # On the merge L2 is the 1-lane bottleneck; on a straight road it is the
+        # unsigned downstream stretch of the same road (see __init__ docstring).
         L2 = bneck_cls(
-            n_bneck, 1, L_bneck, p.rho_max,
-            p.rho_crit if p.rho_crit_bneck is None else p.rho_crit_bneck,
-            p.v_free_bneck, p.a, name="L2", **bneck_kw
+            n_bneck, lanes_down, L_bneck, p.rho_max, rho_crit_down,
+            v_free_down, p.a, name="L2", **bneck_kw
         )
         net = Network(name="merge").add_path(
             origin=O1, path=(N1, L1, N2, L2, N3), destination=D1
@@ -994,12 +1224,15 @@ class MetanetModel:
         self.n_seg = n_main + n_bneck
         self.n_ctrl = n_main
         self.seg_lengths_km = [L_main] * n_main + [L_bneck] * n_bneck
-        self.seg_lanes = [2] * n_main + [1] * n_bneck
+        self.seg_lanes = [lanes_main] * n_main + [lanes_down] * n_bneck
         # SUMO edge index each METANET segment maps to (bottleneck segments all
-        # belong to the last SUMO edge)
-        self.seg_edge_index = list(range(n_main)) + [n_main] * n_bneck
+        # belong to the last SUMO edge; on a straight road one segment per edge)
+        self.seg_edge_index = (list(range(n_main + n_bneck)) if self.straight
+                               else list(range(n_main)) + [n_main] * n_bneck)
         # per-segment VSL upper bound = the SUMO edge's own legal limit (km/h)
-        self.v_ctrl_ub = np.array(geom.main_limits_kmh)
+        self.v_ctrl_ub = np.asarray(legal_kmh, float)
+        # per-segment free-flow speed, for callers that must stay below it
+        self.seg_v_free = [p.v_free_main] * n_main + [v_free_down] * n_bneck
 
     # -- helpers -----------------------------------------------------------
     @property
@@ -1030,10 +1263,7 @@ class MetanetModel:
     def x0_empty(self):
         """Initial state: empty road at free flow."""
         rho = np.zeros(self.n_seg)
-        v = np.array(
-            [self.p.v_free_main] * self.n_ctrl
-            + [self.p.v_free_bneck] * (self.n_seg - self.n_ctrl)
-        )
+        v = np.array(self.seg_v_free, float)
         w = np.zeros(1)
         return np.concatenate([rho, v, w])
 

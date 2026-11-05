@@ -1,146 +1,154 @@
 # MPC for Highway Decongestion and Safety
 
-QUT capstone (EGH400). Reduce traffic shockwaves at a motorway lane drop by
-applying Model Predictive Control to Variable Speed Limit signs, and find which
-**cost functions** best trade off mobility against safety.
+QUT capstone (EGH400/EGH490), Joshua Stirling, supervised by Dr Guilherme
+Fróes Silva. Nonlinear Model Predictive Control (MPC) sets Variable Speed
+Limit (VSL) signs, and the project compares **which MPC cost functions best
+reduce traffic shockwaves, and at what cost to mobility and safety**.
 
-- **SUMO** simulates individual vehicles and is treated as ground truth.
-- A **macroscopic model** runs inside the controller to predict traffic cheaply.
-- The **MPC** picks speed limits by optimising a cost function over that model.
+**The report is [`Final_Report.pdf`](Final_Report.pdf).** It is the reference
+for the method, results and conclusions; this README covers how the code is
+laid out and how to reproduce the report. [`EXPERIMENTS.md`](EXPERIMENTS.md)
+is the log of every experiment run and what each one found.
+
+- **SUMO** (microscopic) is the ground truth; every result is measured in SUMO.
+- **Bounded-METANET** (macroscopic, built with `sym-metanet` on CasADi) is the
+  prediction model inside the controller.
+- **The NMPC** is CasADi + `csnlp` + IPOPT, talking to SUMO over TraCI.
+- **Two roads**: a 2→1 lane merge (standing queue) and a straight two-lane
+  road with one slow vehicle (travelling jam). Report §6.1, Table 4.
 
 ---
 
-## Quick start
+## Setup
 
 ```bash
-# 1. Does the model match SUMO?  (uses the cached baseline; ~30 s)
-python validation/metanet_vs_sumo.py
-
-# 2. How accurate is it at the horizon the controller uses?  (~2 min)
-python validation/metanet_prediction_error.py
-
-# 3. Run the closed loop: SUMO + MPC together              (~5 min)
-python control/main_metanet_v1.py
+pip install -r requirements.txt      # Python 3.11
 ```
 
-Figures are written to `docs/figures/` (created on first run) and result
-tables to `data/`.
-Scripts can be run from any directory; paths resolve to the project root.
-
-**Requirements:** Python 3.11, SUMO (with `traci` on the path), and
-`numpy scipy matplotlib casadi sym-metanet csnlp`.
+SUMO 1.24.0 must be installed separately with `sumo` on `PATH`. Developed on
+Windows; the launchers in `control/*.ps1` are PowerShell, everything else is
+plain Python and can be run from any directory. SUMO's per-run output goes to
+`%TEMP%\egh400_sumo_scratch` (keep it out of OneDrive).
 
 ---
 
-## Where everything lives
+## Repository layout
 
-| folder | what it is | start here |
+| path | what it is |
+|---|---|
+| [`model/`](model/) | Bounded-METANET prediction model and all calibrated parameter sets |
+| [`control/`](control/) | NMPC controller, cost functions, closed-loop runner, experiment runner, report analysis and figures |
+| [`validation/`](validation/) | SUMO metrics (shockwave, safety), prediction-model studies, parity tests |
+| [`calibration/`](calibration/) | Fitting the model to the straight road |
+| [`sumo/`](sumo/) | Both SUMO scenarios and the scripts that build them |
+| `experiments/` | Only the two numpy reference models that calibration and the parity tests import (the 87-model bake-off that chose Bounded-METANET is not shared) |
+| `data/` | Fixed SUMO baselines, calibrated parameters, and the raw per-run result rows behind every table and figure |
+
+`data/` contents:
+
+| folder / file | holds | report |
 |---|---|---|
-| [`model/`](model/) | The traffic models. METANET and its variants. | `model/README.md` |
-| [`control/`](control/) | The MPC controller and the SUMO closed loop. | `control/README.md` |
-| [`validation/`](validation/) | Does the model match SUMO? Figures and error metrics. | `validation/README.md` |
-| [`calibration/`](calibration/) | Fitting model parameters to SUMO. | `calibration/README.md` |
-| [`experiments/`](experiments/) | Reference implementations of the two replacement models, kept so the parity tests can run. The full bake-off (87 candidates) is not part of this repository. | — |
-| [`sumo/`](sumo/) | The SUMO scenario: network, routes, config. | — |
-| `data/` | Result tables. `sumo_baseline.npz` is the ground truth and is **fixed**. | — |
+| `sweep_final/` | round 42: every cost function on both roads, realistic sign, final config, 10 seeds (1,190 runs) | §7.1, §7.2, App. A |
+| `sweep_final_ssm/` | round 42b: safety (SSM-instrumented) runs of the headline objectives | §7.3 |
+| `sweep_bmjam/` | round 41: `tts:1\|jam:5` on the jam-calibrated model, idealised / realistic sign, drivers 1.5×, solver test | §5.5, §7.3, §7.4 |
+| `sweep_straight/` | rounds 11–37 on the straight road, incl. instrumented no-control and rule baselines and rule tuning | §6.3, §7.3, §7.4 |
+| `prediction_study/` | 600 s forecast skill and sign-response branches on both roads | §4.4, §7.5 |
+| `sumo_baseline.npz`, `straight_baseline.npz` | fixed uncontrolled SUMO runs the models are calibrated against — **never regenerate** | §4.3 |
+| `params_*.json` | straight-road calibration outputs | Table 1 |
+| `wave_validation.json` | shockwave metric checked against vehicle trajectories | §3.3 |
+| `sign_check.jsonl` | does each headline objective's cost respond to the sign? | — |
 
-Every number quoted in [`FINDINGS.md`](FINDINGS.md) can be re-derived from the
-tracked `data/*.json` files without re-running SUMO.
-
----
-
-## The scenario
-
-A 2.3 km motorway: nine 200 m sections with two lanes, then a 496 m section
-with one lane. That lane drop is the bottleneck. Traffic is fed in at
-4000 veh/h for 1000 s, then the supply stops.
-
-Two facts about it that are easy to get wrong, and both have cost time before:
-
-- **The run must be at least 2500 s.** SUMO still has 328 vehicles queued at
-  t = 1000 s and does not clear until t ≈ 1773 s. Any window ending at 1000 s
-  cuts off the entire drain.
-- **The declared demand is not the realised demand.** Once the entrance jams,
-  SUMO cannot insert vehicles, so actual inflow collapses to near zero and then
-  surges again. Feed the model the *measured* inflow, not the nominal 4000.
+Each `sweep_*/` folder has `jobs.json` (the manifest) and `shard<k>.json`
+(one list of result rows per worker; one row = one SUMO run).
 
 ---
 
-## Current state
+## Reproducing the report
 
-| model | open-loop RMSE | prediction @210 s (held out) |
+These need only the shared data (no SUMO, seconds each). Figures go to
+`docs/final_report/figures/`, which is created on demand and not tracked.
+
+| report item | command | reads |
 |---|---|---|
-| **Bounded-METANET** (recommended) | **18.8 km/h** | 0.784 |
-| expA asymmetric anticipation | 26.1 | **0.862** |
-| Han first-order | 27.2 | 0.663 |
-| original METANET | 36.0 | 0.046 |
+| Fig. 1 | `python control/plot_report_model.py` ¹ | `sumo_baseline.npz` |
+| Fig. 2 | `python control/plot_report_model.py` ¹ (runs one uncontrolled SUMO run) | — |
+| Table 1 | `PARAMS_BM`, `PARAMS_BM_JAM_DIS` in `model/metanet_model.py` | — |
+| Table 2 | `python validation/analyse_prediction_study.py` | `prediction_study/` |
+| Figs. 3–6, Table 6, Table 7 | `python control/plot_report_results.py`, `python control/analyse_final.py` | `sweep_final/` |
+| Tables 10–13 (App. A) | `python control/make_appendix_tables.py` | `sweep_final/` |
+| Table 8 | `python control/analyse_final_ssm.py` | `sweep_final_ssm/`, `sweep_straight/`, `sweep_bmjam/` |
+| Table 9 | `python control/analyse_robustness.py` | `sweep_bmjam/`, `sweep_final/`, `sweep_straight/` |
+| Fig. 7, §7.5 numbers | `python control/plot_sign_response.py`, `python validation/analyse_prediction_study.py` | `prediction_study/` |
+| §5.5 solver test | `python control/analyse_overnight.py` (round 41 section) | `sweep_bmjam/` |
 
-The original METANET model predicts poorly at the 210 s horizon the controller
-uses. Two replacements were found and both are ported into `model/`; see
-[`FINDINGS.md`](FINDINGS.md) §1 for how they were chosen and what changing the
-model does to the results.
+¹ One script draws both Section 4 figures.
 
-**Phase D (comparing cost functions) has run.** The model work above was
-needed first, because a controller cannot be judged on a model that cannot
-predict.
+Checked from a fresh export of the repository: Appendix A, `summary.json` and
+Figs. 1, 3–7 regenerate identical to the report's copies.
+
+Re-running the experiments themselves needs SUMO and takes about a day on a
+6-core laptop for round 42:
+
+```powershell
+powershell -File control\launch_sweep.ps1 -Round final -Dir data\sweep_final -N 6
+python control\sweep.py --status --dir data\sweep_final
+```
+
+Workers skip jobs whose rows already exist, so relaunching the same command
+resumes. The prediction study is `control\run_prediction_study.ps1`.
 
 ---
 
-## How to do the two things you will actually want to do
+## The final configuration
 
-### Run SUMO on its own
+Defined in `control/sweep.py` (`build_final_manifest`) and run by
+`control/phase_d.py::run_closed_loop`:
 
-```bash
-python validation/metanet_vs_sumo.py --rerun-sumo
-```
+- replan every 60 s, horizon Np = 7 moves (420 s), limits rounded to 10 km/h
+  ("realistic sign"); limits in [40 km/h, legal]; rate limit 60 km/h/move
+- IPOPT, max 300 iterations, no wall-clock limit (deterministic), warm start;
+  on failure the previous limits are held
+- model: `PARAMS_BM` on the merge, `PARAMS_BM_JAM_DIS` on the straight road
+- each cost term enters at its road's **matched weight** (`FINAL_W_MERGE`,
+  `FINAL_W_STRAIGHT`; report Table 10), set by `validation/term_scale.py`
+- baselines: no control, and the reactive rule (v_det 30 km/h, post 40 km/h on
+  the 9 signs, hold 120 s)
+- 10 seeds, paired on seed, Wilcoxon signed-rank
 
-Runs SUMO headless for 2500 s with no control, records per-edge density and
-speed every second, caches it to `data/sumo_baseline.npz`, and plots it against
-the model.
+Cost functions are strings of `term:weight` joined by `|`, e.g.
+`tts:1|jam:2.5`. Report names → code names:
 
-To watch it, open `control/main_metanet_v1.py` and set `USE_GUI = True`, or run
-SUMO directly:
+| report | code | report | code |
+|---|---|---|---|
+| Total time spent | `tts` | Speed variance | `speed_var` |
+| Delay | `delay` | Speed drop | `speed_grad` |
+| Terminal | `terminal` | Conflict risk | `conflict_risk` |
+| Entrance queue | `queue` | Control variation | `dvsl` |
+| Jam | `jam` | Upstream congestion | `upstream_queue` |
+| Acceleration | `accel` | Squared density | `density_sq` |
+| Temporal acceleration | `accel_temporal` | Density tracking | `density_track` |
+| Density-weighted accel. | `accel_dens` | Bottleneck density | `bneck_density` |
+| Density rate | `dens_rate` | Bottleneck discharge | `bneck_flow` |
 
-```bash
-sumo-gui -c sumo/simulation2.sumocfg --end 2500
-```
-
-**Do not regenerate `data/sumo_baseline.npz` casually.** Every calibrated model
-is scored against that exact file.
-
-### Test a cost function (Phase D)
-
-Eighteen objectives are defined in `control/cost_functions.py`. To add one, add
-an entry to the `COSTS` dict — a weighted combination of the terms above it,
-each a CasADi expression of density `rho`, speed `v`, queue `w` and the speed
-limits `v_ctrl` (the decision variables). Then:
-
-```bash
-python control/phase_d.py --screen --seeds 10 --costs my_new_cost
-python control/compare_models.py
-```
-
-Scoring is always on **SUMO** output, never on the model that chose the control.
-
-Three things already established that will shape any new cost function:
-
-- **Acceleration alone is degenerate** — uniformly slow traffic has no
-  acceleration, so it collapses to "slow everything down". It must be paired
-  with a delay term. The best objectives found all combine the two.
-- **Delay alone does nothing.**
-- **Throughput cannot discriminate**: 1112 vehicles get through under every
-  policy tested, so it must not be quoted as if it separates them.
-- Results must be reported against **both** no-control and the constant-sign
-  reference (`experiments/fixed_vsl.py`), because a constant sign matches the
-  best controller found. See [`FINDINGS.md`](FINDINGS.md) §2.
+To add a term, write `term_<name>(S)` in `control/cost_functions.py` (smooth
+CasADi only: no `max`, `abs` or hard indicators) and register it in `_TERMS`.
+To run a new experiment, add a `build_<name>_manifest` to `control/sweep.py`
+and register it in `--round`. Use a new `--dir`, and keep job fields
+key-stable so stored rows still resume.
 
 ---
 
-## Reading order for someone new
+## Things the next person must know
 
-1. [`FINDINGS.md`](FINDINGS.md) — what the project set out to answer, what was
-   measured, and what is still open. Start here.
-2. `model/README.md` — the prediction models and how they differ.
-3. `control/README.md` — the MPC and the cost functions.
-4. `validation/README.md` — how model accuracy and the shockwave metric are
-   measured. Note §6 of FINDINGS: the metric's time step is not a free choice.
+The full list, with evidence, is in [`EXPERIMENTS.md`](EXPERIMENTS.md) §3.
+
+- **Measure whole-road congestion, including the entrance queue.** Many
+  objectives "reduce shockwaves" by holding traffic back off the measured road.
+- **Report the sign behaviour with every number.** The idealised sign
+  (30 s moves, continuous limits) flatters the MPC; the rule is unaffected.
+- **Match term weights before comparing objectives.** At weight 1, terms
+  differ in influence by up to 1000×.
+- **MPC rows are not bit-reproducible across machines.** No-control and rule
+  rows are. Pair MPC rows only with rows from the same machine.
+- **Never use fewer than 6 seeds** for a ranking; always pair on seed.
+- **Parity-test any change to the model** (`validation/test_*parity*.py`, ~1e-12).

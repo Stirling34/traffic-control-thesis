@@ -52,9 +52,36 @@ SIM_STEPS = 2500
 TTC_STAR = 3.0        # s. Minderhoud & Bovy, and SUMO's own SSM default
 V_MIN_MS = 5.0        # follower speed floor, see correction 2
 FOLLOWER_TYPE = "2"   # ego is the follower, see correction 1
+# DRAC: deceleration rate to avoid a crash. 3.35 m/s^2 is the conventional
+# threshold (Cooper & Ferguson 1976; used throughout the SSM literature).
+#
+# WHY IT MATTERS HERE. TET/TIT are built on TTC = gap/dv, which diverges as
+# dv -> 0, so a stopped queue at minGap manufactures "critical" TTCs that are
+# not conflicts. The V_MIN_MS filter exists to remove those. But the filter is
+# itself policy-dependent: a controller that keeps traffic MOVING promotes
+# queue-seconds (excluded) into moving-seconds (counted), so counted TET can
+# rise even when total conflicts FALL. Measured on `tts`: counted TET +19.0%
+# while total conflict-seconds went -12.2%. The two readings disagree, and the
+# disagreement is a property of the metric, not of the control.
+#
+# DRAC ~ dv^2 / (2*gap) does not diverge at dv -> 0 -- it goes to zero -- so it
+# needs no speed filter and is immune to that bias. It is the tie-breaker.
+DRAC_STAR = 3.35      # m/s^2
 
 
-def _ssm_args(tag):
+def _ssm_args(tag, out_dir=None):
+    """SUMO arguments for the surrogate-safety device.
+
+    `out_dir` lets a caller put the ~90 MB SSM file somewhere other than
+    sumo/out. That matters because this repository sits inside a OneDrive
+    folder, so a sweep of instrumented runs otherwise pushes tens of GB of
+    short-lived scratch through the sync engine. See control/phase_d.SCRATCH.
+    """
+    out_dir = out_dir or OUT
+    return _ssm_args_in(tag, out_dir)
+
+
+def _ssm_args_in(tag, out_dir):
     return ["--device.ssm.probability", "1.0",
             "--device.ssm.deterministic",
             "--device.ssm.measures", "TTC DRAC",
@@ -64,7 +91,7 @@ def _ssm_args(tag):
             # 50 m is the default. Changing it changes which interactions are
             # observed, i.e. it changes the metric, so do not tune it.
             "--device.ssm.range", "50.0",
-            "--device.ssm.file", os.path.join(OUT, "ssm_%s.xml" % tag)]
+            "--device.ssm.file", os.path.join(out_dir, "ssm_%s.xml" % tag)]
 
 
 def _span(el, name):
@@ -106,6 +133,42 @@ def parse_safety(path, ttc_star=TTC_STAR, v_min=V_MIN_MS, dt=1.0):
         el.clear()
     return {"TET_s": tet, "TIT_s": tit, "n_exposed": kept,
             "n_dropped_mirror": dropped_mirror, "n_dropped_slow": dropped_slow}
+
+
+def parse_drac(path, drac_star=DRAC_STAR, dt=1.0):
+    """Time exposed to DRAC above the threshold, and the integrated excess.
+
+    The unbiased companion to `parse_safety`. No speed filter is applied and
+    none is needed: DRAC vanishes rather than diverges as the speed difference
+    goes to zero, so a stationary queue contributes nothing instead of
+    contributing spuriously. Mirror encounters are still dropped, exactly as
+    for TTC -- that correction is about double-logging, not about speed.
+    """
+    ted = tid = 0.0
+    kept = 0
+    peak = 0.0
+    for _, el in ET.iterparse(path, events=("end",)):
+        if el.tag != "conflict":
+            continue
+        types = _span(el, "typeSpan")
+        dracs = _span(el, "DRACSpan")
+        for i, ty in enumerate(types):
+            if i >= len(dracs):
+                break
+            if ty != FOLLOWER_TYPE:
+                continue
+            try:
+                dr = float(dracs[i])
+            except ValueError:            # "NA" = not on a collision course
+                continue
+            peak = max(peak, dr)
+            if dr > drac_star:
+                ted += dt
+                tid += (dr - drac_star) * dt
+                kept += 1
+        el.clear()
+    return {"TED_s": ted, "TID_ms2": tid, "n_drac_events": kept,
+            "max_DRAC": peak}
 
 
 def parse_emissions(path, lengths_km=None):

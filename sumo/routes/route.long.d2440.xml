@@ -1,0 +1,11 @@
+<routes>
+    <vType id="standard" accel="2.6" decel="4.5" length="5" minGap="0.5" maxSpeed="33.33" sigma="0.5" color="blue" emissionClass="HBEFA3/PC_G_EU4" type ="car" lcLookaheadLeft="1000" lcLookaheadRight="1000"/>
+    <vType id="connected" accel="2.6" decel="4.5" length="5" minGap="0.5" maxSpeed="33.33" sigma="0.0" color="red" emissionClass="HBEFA3/PC_G_EU4" type ="car" lcLookaheadLeft="1000" lcLookaheadRight="1000"/>
+
+    <route id="r1" edges="u0u1 u1u2 u2u3 u3u4 u4u5 u5u6 u6u7 u7u8 u8u9 u9u10 u10u11 u11u12 u12u13 u13u14 u14u15 u15u16 u16u17 u17start start1 n1n2 n2n3 n3n4 n4n5 n5n6 n6n7 n7n8 n8n9 n9end"/>
+
+    <flow id="std_flow" type="standard" begin="0" end="1000" vehsPerHour="610" route="r1" departLane="1" departPos="0" laneChangeMode="512" departSpeed="speedLimit"/>
+    <flow id="std_flow1" type="standard" begin="0" end="1000" vehsPerHour="610" route="r1" departLane="0" departPos="0" laneChangeMode="512" departSpeed="speedLimit"/>
+    <flow id="cv_flow" type="connected" begin="0" end="1000" vehsPerHour="610" route="r1" departLane="1" departPos="0" laneChangeMode="512" departSpeed="speedLimit"/>
+    <flow id="cv_flow1" type="connected" begin="0" end="1000" vehsPerHour="610" route="r1" departLane="0" departPos="0" laneChangeMode="512" departSpeed="speedLimit"/>
+</routes>

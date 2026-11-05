@@ -1,0 +1,31 @@
+<nodes>
+    <node id="u0" x="-3600.0" y="0.0" type="priority"/>
+    <node id="u1" x="-3400.0" y="0.0" type="priority"/>
+    <node id="u2" x="-3200.0" y="0.0" type="priority"/>
+    <node id="u3" x="-3000.0" y="0.0" type="priority"/>
+    <node id="u4" x="-2800.0" y="0.0" type="priority"/>
+    <node id="u5" x="-2600.0" y="0.0" type="priority"/>
+    <node id="u6" x="-2400.0" y="0.0" type="priority"/>
+    <node id="u7" x="-2200.0" y="0.0" type="priority"/>
+    <node id="u8" x="-2000.0" y="0.0" type="priority"/>
+    <node id="u9" x="-1800.0" y="0.0" type="priority"/>
+    <node id="u10" x="-1600.0" y="0.0" type="priority"/>
+    <node id="u11" x="-1400.0" y="0.0" type="priority"/>
+    <node id="u12" x="-1200.0" y="0.0" type="priority"/>
+    <node id="u13" x="-1000.0" y="0.0" type="priority"/>
+    <node id="u14" x="-800.0" y="0.0" type="priority"/>
+    <node id="u15" x="-600.0" y="0.0" type="priority"/>
+    <node id="u16" x="-400.0" y="0.0" type="priority"/>
+    <node id="u17" x="-200.0" y="0.0" type="priority"/>
+    <node id="start" x="0.0" y="0.0" type="priority"/>
+    <node id="n1" x="200.0" y="0.0" type="priority"/>
+    <node id="n2" x="400.0" y="0.0" type="priority"/>
+    <node id="n3" x="600.0" y="0.0" type="priority"/>
+    <node id="n4" x="800.0" y="0.0" type="priority"/>
+    <node id="n5" x="1000.0" y="0.0" type="priority"/>
+    <node id="n6" x="1200.0" y="0.0" type="priority"/>
+    <node id="n7" x="1400.0" y="0.0" type="priority"/>
+    <node id="n8" x="1600.0" y="0.0" type="priority"/>
+    <node id="n9" x="1800.0" y="0.0" type="priority"/>
+    <node id="end" x="2300.0" y="0.0" type="priority"/>
+</nodes>

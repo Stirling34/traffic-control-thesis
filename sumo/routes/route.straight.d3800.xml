@@ -1,0 +1,11 @@
+<routes>
+    <vType id="standard" accel="2.6" decel="4.5" length="5" minGap="0.5" maxSpeed="33.33" sigma="0.5" color="blue" emissionClass="HBEFA3/PC_G_EU4" type ="car" lcLookaheadLeft="1000" lcLookaheadRight="1000"/>
+    <vType id="connected" accel="2.6" decel="4.5" length="5" minGap="0.5" maxSpeed="33.33" sigma="0.0" color="red" emissionClass="HBEFA3/PC_G_EU4" type ="car" lcLookaheadLeft="1000" lcLookaheadRight="1000"/>
+
+    <route id="r1" edges="a00 a01 a02 a03 a04 a05 a06 a07 a08 a09 a10 a11 a12 a13 a14 a15 a16 a17 c0 c1 c2 c3 c4 c5 c6 c7 c8 d0 d1 d2 d3 d4 d5"/>
+
+    <flow id="std_flow" type="standard" begin="0" end="2400" vehsPerHour="950" route="r1" departLane="1" departPos="0" laneChangeMode="512" departSpeed="max"/>
+    <flow id="std_flow1" type="standard" begin="0" end="2400" vehsPerHour="950" route="r1" departLane="0" departPos="0" laneChangeMode="512" departSpeed="max"/>
+    <flow id="cv_flow" type="connected" begin="0" end="2400" vehsPerHour="950" route="r1" departLane="1" departPos="0" laneChangeMode="512" departSpeed="max"/>
+    <flow id="cv_flow1" type="connected" begin="0" end="2400" vehsPerHour="950" route="r1" departLane="0" departPos="0" laneChangeMode="512" departSpeed="max"/>
+</routes>
